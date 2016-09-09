@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <link rel="stylesheet" type="text/css" href="/static/vendor/material.min.css">
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons"
+              rel="stylesheet">
+        <title>BrainDrops</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            .mdl-card { min-height: 0; margin-bottom: 15px;}
+        </style>
+    </head>
+    <body>
+        <div class="mdl-layout mdl-js-layout mdl-layout--fixed-drawer mdl-layout--fixed-header">
+			<header class="mdl-layout__header">
+			    <div class="mdl-layout-icon"></div>
+				<div class="mdl-layout__header-row">
+					<span class="mdl-layout-title">
+						BrainDrops
+					</span>
+				</div>
+			</header>
+			<div class="mdl-layout__drawer">
+				<span class="mdl-layout-title">
+					BrainDrops
+				</span>
+				<nav class="mdl-navigation">
+					<a href="#" class="mdl-navigation__link">Today</a>
+					<a href="#" class="mdl-navigation__link">Yesterday</a>
+					<a href="#" class="mdl-navigation__link">This Week</a>
+				</nav>
+				<div class="mdl-layout-spacer"></div>
+				<nav class="mdl-navigation">
+					<a href="#" class="mdl-navigation__link">How It Works</a>
+					<a href="#" class="mdl-navigation__link">Settings</a>
+					<a href="#" class="mdl-navigation__link">System</a>
+				</nav>
+			</div>
+			<main class="mdl-layout__content">
+				<div class="mdl-grid">
+					<div class="mdl-cell mdl-cell--12">
+						<div class="mdl-card mdl-shadow--2dp">
+							<div class="mdl-card__title">
+								<h2 class="mdl-card__title-text">Welcome</h2>
+							</div>
+							<div class="mdl-card__supporting-text">
+    							Welcome to <strong>BrainDrops</strong>. Your twitter style outerliner for all your thoughts you want to persist.
+  							</div>
+  							<div class="mdl-card__actions mdl-card--border">
+    							<a class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+      								Get Started
+    							</a>
+  							</div>
+						</div>
+					</div>
+				</div>
+				<div class="mdl-grid">
+					<div class="mdl-cell mdl-cell--12">
+						<div class="mdl-card mdl-shadow--2dp">
+							<div class="mdl-card__title">
+								<strong class="mdl-card__title-text">Drop your brain here</strong>
+							</div>
+							<div class="mdl-card__supporting-text" id="drop-form-container">
+							</div>
+						</div>
+					</div>
+					<div class="mdl-cell mdl-cell--12" id="drop-comp-container">
+
+					</div>
+				</div>
+			</main>
+		</div>
+        <script src="/static/vendor/jquery.min.js"></script>
+        <script src="/static/vendor/underscore.min.js"></script>
+        <script src="/static/vendor/backbone.min.js"></script>
+        <script src="/static/vendor/backbone.radio.min.js"></script>
+        <script src="/static/vendor/backbone.marionette.min.js"></script>
+        <script src="/static/vendor/material.min.js"></script>
+        <script src="/static/braindrops.js"></script>
+
+        <script type="text/html" id="drop-comp-template"></script>
+        <script type="text/html" id="drop-template">
+		    <div class="mdl-card mdl-shadow--2dp">
+			    <div class="mdl-card__supporting-text">
+                    <p>
+                        <%= message %>
+                    </p>
+                    <%= datetime %>
+	    		</div>
+                <div class="mdl-card__menu">
+                    <button class="mdl-button mdl-button--icon mdl-js-button mdl-js-ripple-effect drop-button-delete">
+                        <i class="material-icons">delete</i>
+                    </button>
+                </div>
+                <% if (tags.length) { %>
+                    <div class="mdl-card__actions mdl-card--border">
+                        <% _.each(tags, function (tag) { %>
+                            <span class="mdl-chip mdl-chip--contact">
+                                <span class="mdl-chip__contact <%= tag.className %> mdl-color-text--white"><%= tag.letter %></span>
+                                <span class="mdl-chip__text"><%= tag.tag %></span>
+                            </span>
+                        <% }) %>
+                    </div>
+                <% } %>
+		    </div>
+        </script>
+        <script type="text/html" id="drop-form-template">
+            <form action="post">
+                <textarea name="drop-message" cols="30" rows="10" class="mdl-textfield__input"></textarea>
+                <div class="mdl-spacer"></div>
+                <button type="submit" class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+                    set it free
+                </button>
+            </form>
+        </script>
+
+    </body>
+</html>

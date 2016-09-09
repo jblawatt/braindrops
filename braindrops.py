@@ -1,5 +1,15 @@
 # coding: utf-8
 
+"""
+
+TODO:
+    - load drops from pop3 or imap
+    - webpack / bundle js to a single file
+    - improve attribute handling
+    - filtering views to different blocks
+
+"""
+
 from __future__ import print_function, absolute_import
 
 import sys
@@ -7,6 +17,7 @@ import os.path
 import argparse
 import re
 import bottle
+
 try:
     import ujson as json
 except ImportError:
@@ -14,7 +25,7 @@ except ImportError:
 
 from json import JSONDecoder
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from tinydb import TinyDB, Query
 from tinydb_serialization import Serializer, SerializationMiddleware
@@ -50,7 +61,7 @@ def drop_collection():
 
 COLOR_TAG = "cyan"
 COLOR_ATTR = "yellow"
-COLOR_DATETIME = "blue"
+COLOR_DATETIME = "white"
 
 
 try:
@@ -107,11 +118,30 @@ def cmd_add(args):
     print(_prettify(drop, full=True))
 
 
-def _list(tags=None, limit=10):
+def _list(tags=None, limit=10, today=False, days=None):
     drops = drop_collection()
 
     if not tags:
         tags = list()
+
+    query = None
+
+    if today:
+        Drop = Query()
+        today = date.today()
+
+        def match_date(value, date_value):
+            return value.date() == date_value
+
+        query = drops.search(Drop.datetime.test(match_date, date.today()))
+
+    if days is not None:
+        Drop = Query()
+
+        def match_dayrange(value, day_range):
+            return value > datetime.now() - timedelta(days=day_range)
+
+        query = drops.search(Drop.datetime.test(match_dayrange, days))
 
     if tags:
         Drop = Query()
@@ -121,16 +151,20 @@ def _list(tags=None, limit=10):
         ])
         query = drops.search(search_query)
     else:
-        query = drops.all()
+        if query is None:
+            query = drops.all()
     query = sorted(query, key=lambda o: o['datetime'], reverse=True)
     query = query[:limit]
     for drop in query:
         yield drop
 
 def cmd_list(args):
-    for drop in _list(tags=args.tags, limit=args.limit):
-        print(_prettify(drop, full=args.full))
-        print()
+    for drop in _list(tags=args.tags, limit=args.limit, today=args.today, days=args.days):
+        if not args.quiet:
+            print(_prettify(drop, full=args.full))
+            print()
+        else:
+            print(drop.eid)
 
 def _tags():
     from collections import defaultdict
@@ -165,41 +199,74 @@ def cmd_remove(args):
     print("ok")
 
 
-def _rest(args):
+def _bottle_app():
 
-    from bottle import response, request
+    from bottle import response, request, Bottle, view, static_file
+    app = Bottle(autojson=True)
 
     def to_json(value):
         return json.dumps(dict(value, id=value.eid), default=json_datetime_serial)
 
-    @bottle.route("/drops", method="GET")
-    def list():
-        response.content_type = "application/json"
-        return map(to_json, _list())
+    def drop_prep(drop):
+        return dict(drop, id=drop.eid)
 
-    @bottle.route("/drops", method="PUT")
+    def json_response(value):
+        response.content_type = "application/json"
+        return json.dumps(value, default=json_datetime_serial)
+
+    @app.route("/", method="GET")
+    def index():
+        return static_file("index.html", root=".")
+
+    @app.route("/static/<path:path>")
+    def static(path):
+        return static_file(path, root="assets")
+
+    @app.route("/api", method="GET")
+    def api_index():
+        json_response([
+            app.get_url("api-drops-list"),
+            app.get_url("api-drops-get", eid="<eid>"),
+            app.get_url("api-drops-create"),
+            app.get_url("api-drops-update", eid="<eid>"),
+            app.get_url("api-drops-delete", eid="<eid>"),
+        ])
+
+    @app.route("/api/drops", method="GET", name="api-drops-list")
+    def list():
+        tag = request.query.get("tag", None)
+        tag = None if tag is None else [tag]
+
+        days = request.query.get("days", None)
+        days = None if days is None else int(days)
+        return json_response(map(drop_prep, _list(tags=tag, days=days)))
+
+    @app.route("/api/drops", method="POST", name="api-drops-create")
     def create():
         payload = request.json
-        return to_json(_add(payload['message']))
+        return json_response(drop_prep((_add(payload['message']))))
 
-    @bottle.route("/drops/<eid:int>", method="GET")
+    @app.route("/api/drops/<eid>", method="GET", name="api-drops-get")
     def get(eid):
         eid = int(eid)
-        response.content_type = "application/json"
-        return to_json(_get(eid))
+        return json_response(drop_prep(_get(eid)))
 
-    @bottle.route("/drops/<eid:int>", method="POST")
+    @app.route("/api/drops/<eid>", method="PUT", name="api-drops-update")
     def update(eid):
-        pass
+        raise NotImplementedError()
 
-    @bottle.route("/drops/<eid:int>", method="DELETE")
+    @app.route("/api/drops/<eid>", method="DELETE", name="api-drops-delete")
     def delete(eid):
         eid = int(eid)
         _remove(eid)
-        response.content_type = "application/json"
-        return json.dumps(["ok"])
+        return json_response(["ok"])
 
-    bottle.run(debug=True, reloader=True)
+    return app
+
+
+def cmd_serve(args):
+    app = _bottle_app()
+    bottle.run(app=app, debug=args.debug, reloader=args.reloader, port=args.port, host=args.host)
 
 
 parser = argparse.ArgumentParser(prog=__file__)
@@ -211,9 +278,12 @@ add_parser.set_defaults(func=cmd_add)
 
 list_parser = sub_parsers.add_parser("list")
 list_parser.add_argument("--full", "-f", dest="full", action="store_true", default=False)
-list_parser.set_defaults(func=cmd_list)
 list_parser.add_argument("--tag", "-t", dest="tags", action="append", default=[])
 list_parser.add_argument("--limit", "-l", dest="limit", type=int, default=5)
+list_parser.add_argument("--quiet", "-q", dest="quiet", action="store_true", default=False)
+list_parser.add_argument("--today", dest="today", action="store_true", default=False)
+list_parser.add_argument("--days", dest="days", type=int, default=None)
+list_parser.set_defaults(func=cmd_list)
 
 rm_parser = sub_parsers.add_parser("rm")
 rm_parser.add_argument("id", metavar="ID", type=int)
@@ -223,8 +293,12 @@ get_parser = sub_parsers.add_parser("get")
 get_parser.set_defaults(func=cmd_get)
 get_parser.add_argument("id", metavar="ID", type=int)
 
-rest_parser = sub_parsers.add_parser("rest")
-rest_parser.set_defaults(func=_rest)
+serve_parser = sub_parsers.add_parser("serve")
+serve_parser.add_argument("--bind", "-b", dest="host", default="127.0.0.1", type=str)
+serve_parser.add_argument("--port", "-p", dest="port", default=8080, type=int)
+serve_parser.add_argument("--no-debug", "-d", dest="debug", action="store_false", default=True)
+serve_parser.add_argument("--no-reloader", "-r", dest="reloader", action="store_false", default=True)
+serve_parser.set_defaults(func=cmd_serve)
 
 tags_parser = sub_parsers.add_parser("tags")
 tags_parser.set_defaults(func=cmd_tags)
