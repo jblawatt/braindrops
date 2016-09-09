@@ -7,6 +7,12 @@ import os.path
 import argparse
 import re
 import bottle
+try:
+    import ujson as json
+except ImportError:
+    import json
+
+from json import JSONDecoder
 
 from datetime import datetime
 
@@ -25,17 +31,27 @@ class DatetimeSerializer(Serializer):
     def decode(self, s):
         return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
 
+def json_datetime_serial(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError("not serializable")
+
 def _storage():
     _serializer = SerializationMiddleware()
     _serializer.register_serializer(DatetimeSerializer(), "DatetimeSerializer")
     return _serializer
 
 
-db = TinyDB("braindrops.json", storage=_storage())
+def drop_collection():
+    db = TinyDB("braindrops.json", storage=_storage())
+    table = db.table("drops")
+    return table
+
 
 COLOR_TAG = "cyan"
 COLOR_ATTR = "yellow"
 COLOR_DATETIME = "blue"
+
 
 try:
     from termcolor import colored
@@ -70,42 +86,120 @@ def _prettify_attrs(message):
 
 
 def _prettify(drop, full=False):
-    print(colored("{%s}" %drop.eid, "red"), colored(drop['datetime'], COLOR_DATETIME))
-    print(_prettify_attrs(_prettify_tags(drop['message'])))
+    resp = []
+    resp.append(" ".join([colored("{%s}" %drop.eid, "red"), colored(drop['datetime'], COLOR_DATETIME)]))
+    resp.append(_prettify_attrs(_prettify_tags(drop['message'])))
     if full:
-        print("tags: {}".format(colored(", ".join(drop['tags']), "green")))
-        print("attrs: {}".format(drop['attrs']))
+        resp.append("tags: {}".format(colored(", ".join(drop['tags']), "green")))
+        resp.append("attrs: {}".format(drop['attrs']))
+    return "\n".join(resp)
 
 
-def _add(args):
-    drop = parser_drop(" ".join(args.message))
-    drops = db.table("drops")
-    drops.insert(drop)
+def _add(message):
+    drop = parser_drop(message)
+    drops = drop_collection()
+    eid = drops.insert(drop)
+    return _get(eid)
 
 
-def _list(args):
-    drops = db.table("drops")
+def cmd_add(args):
+    drop = _add(" ".join(args.message))
+    print(_prettify(drop, full=True))
 
-    if args.tags:
+
+def _list(tags=None, limit=10):
+    drops = drop_collection()
+
+    if not tags:
+        tags = list()
+
+    if tags:
         Drop = Query()
-        for tag in args.tags:
-            query = drops.search(Drop.tags.test(lambda v: tag in v))
+        from operator import __or__
+        search_query = reduce(__or__, [
+            Drop.tags.test(lambda l: tag in l) for tag in tags
+        ])
+        query = drops.search(search_query)
     else:
         query = drops.all()
     query = sorted(query, key=lambda o: o['datetime'], reverse=True)
-    query = query[:args.limit]
+    query = query[:limit]
     for drop in query:
-        _prettify(drop, full=args.full)
+        yield drop
+
+def cmd_list(args):
+    for drop in _list(tags=args.tags, limit=args.limit):
+        print(_prettify(drop, full=args.full))
         print()
 
-def _get(args):
-    drops = db.table("drops")
-    drop = drops.get(eid=args.id)
-    print(drop)
+def _tags():
+    from collections import defaultdict
+    tags = defaultdict(int)
+    drops = drop_collection()
+    for drop in drops.all():
+        for tag in drop['tags']:
+            tags[tag] += 1
+    for tag, count in sorted(tags.items(), key=lambda o: o[1], reverse=True):
+        yield tag, count
+
+def cmd_tags(args):
+    for tag, count in _tags():
+        print("%s: %s" % (tag, count))
+
+def _get(eid):
+    drops = drop_collection()
+    return drops.get(eid=eid)
+
+
+def cmd_get(args):
+    print(_prettify(_get(args.id)))
+
+
+def _remove(eid):
+    drops = drop_collection()
+    drops.remove(eids=[eid])
+
+
+def cmd_remove(args):
+    _remove(args.id)
+    print("ok")
 
 
 def _rest(args):
-    pass
+
+    from bottle import response, request
+
+    def to_json(value):
+        return json.dumps(dict(value, id=value.eid), default=json_datetime_serial)
+
+    @bottle.route("/drops", method="GET")
+    def list():
+        response.content_type = "application/json"
+        return map(to_json, _list())
+
+    @bottle.route("/drops", method="PUT")
+    def create():
+        payload = request.json
+        return to_json(_add(payload['message']))
+
+    @bottle.route("/drops/<eid:int>", method="GET")
+    def get(eid):
+        eid = int(eid)
+        response.content_type = "application/json"
+        return to_json(_get(eid))
+
+    @bottle.route("/drops/<eid:int>", method="POST")
+    def update(eid):
+        pass
+
+    @bottle.route("/drops/<eid:int>", method="DELETE")
+    def delete(eid):
+        eid = int(eid)
+        _remove(eid)
+        response.content_type = "application/json"
+        return json.dumps(["ok"])
+
+    bottle.run(debug=True, reloader=True)
 
 
 parser = argparse.ArgumentParser(prog=__file__)
@@ -113,21 +207,27 @@ sub_parsers = parser.add_subparsers()
 
 add_parser = sub_parsers.add_parser("add")
 add_parser.add_argument("message", metavar="M", type=str, nargs="+")
-add_parser.set_defaults(func=_add)
+add_parser.set_defaults(func=cmd_add)
 
 list_parser = sub_parsers.add_parser("list")
 list_parser.add_argument("--full", "-f", dest="full", action="store_true", default=False)
-list_parser.set_defaults(func=_list)
+list_parser.set_defaults(func=cmd_list)
 list_parser.add_argument("--tag", "-t", dest="tags", action="append", default=[])
 list_parser.add_argument("--limit", "-l", dest="limit", type=int, default=5)
 
-get_parser = sub_parsers.add_parser("get")
-get_parser.set_defaults(func=_get)
-get_parser.add_argument("id", metavar="ID", type=str)
+rm_parser = sub_parsers.add_parser("rm")
+rm_parser.add_argument("id", metavar="ID", type=int)
+rm_parser.set_defaults(func=cmd_remove)
 
+get_parser = sub_parsers.add_parser("get")
+get_parser.set_defaults(func=cmd_get)
+get_parser.add_argument("id", metavar="ID", type=int)
 
 rest_parser = sub_parsers.add_parser("rest")
-rest_parser.set_defualts(func=_rest)
+rest_parser.set_defaults(func=_rest)
+
+tags_parser = sub_parsers.add_parser("tags")
+tags_parser.set_defaults(func=cmd_tags)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+pyenv/
 env/
 build/
 develop-eggs/
@@ -87,3 +88,8 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+
+# APP Sepecific
+braindrops.json
+
